@@ -339,21 +339,7 @@ st.dataframe(
     ),
     use_container_width=True,
 )
-    # Vårsemester
-    with col2:
-        current_semester = semester_number
-        current_label = get_term_label(current_semester)
-        income_year_current = get_income_year_for_semester(current_semester)
-
-        st.markdown(f"### {current_label}")
-        st.caption(f"Bruker årsinntekt år {income_year_current}: {format_nok(annual_incomes[income_year_current])}")
-
-        lives_away_spring = st.selectbox(
-            f"Bodd borte i {current_label}?",
-            options=["Ja", "Nei"],
-            index=0,
-            key=f"away_sem_{current_semester}",
-        )
+   
 
         support_share_spring = st.slider(
             f"Andel støtte i {current_label}",
