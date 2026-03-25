@@ -337,7 +337,8 @@ st.dataframe(
             "Lån fra basisstøtte": lambda x: format_nok(x),
         }
     ),
-
+    use_container_width=True,
+)
     # Vårsemester
     with col2:
         current_semester = semester_number
