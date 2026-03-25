@@ -6,7 +6,7 @@ st.set_page_config(page_title="Studieøkonomi-kalkulator", layout="wide")
 
 st.title("Studieøkonomi-kalkulator")
 st.write(
-    "Beregn fremtidig studielån basert på inntekt, bostatus, støttegrad og eventuelle skolepenger."
+    "Beregn fremtidig studielån basert på årsinntekt, bostatus per semester, støttegrad og eventuelle skolepenger."
 )
 
 # -------------------------
@@ -16,23 +16,46 @@ def format_nok(value: float) -> str:
     sign = "-" if value < 0 else ""
     return f"{sign}{abs(value):,.0f} kr".replace(",", " ")
 
-def calculate_stipend_ratio(income: float, threshold: float, full_loan_income_limit: float) -> float:
+def calculate_stipend_ratio(
+    annual_income: float,
+    annual_threshold: float,
+    annual_full_loan_limit: float
+) -> float:
     """
-    Returnerer stipendandel av støtte:
+    Returnerer stipendandel av støtte basert på årsinntekt:
     - 40 % stipend ved eller under threshold
     - lineært ned til 0 ved full_loan_income_limit
     """
-    if income <= threshold:
+    if annual_income <= annual_threshold:
         return 0.40
-    if income >= full_loan_income_limit:
+    if annual_income >= annual_full_loan_limit:
         return 0.0
 
-    reduction_range = full_loan_income_limit - threshold
+    reduction_range = annual_full_loan_limit - annual_threshold
     if reduction_range <= 0:
         return 0.0
 
-    remaining_share = 1 - ((income - threshold) / reduction_range)
+    remaining_share = 1 - ((annual_income - annual_threshold) / reduction_range)
     return max(0.0, 0.40 * remaining_share)
+
+def get_income_year_for_semester(semester_number: int) -> int:
+    """
+    Mapping:
+    Semester 1 -> Årsinntekt år 1
+    Semester 2 -> Årsinntekt år 2
+    Semester 3 -> Årsinntekt år 2
+    Semester 4 -> Årsinntekt år 3
+    Semester 5 -> Årsinntekt år 3
+    Semester 6 -> Årsinntekt år 4
+    osv.
+    """
+    if semester_number == 1:
+        return 1
+    return (semester_number // 2) + 1
+
+def get_term_label(semester_number: int) -> str:
+    season = "Høst" if semester_number % 2 == 1 else "Vår"
+    return f"{season} ({semester_number}. semester)"
 
 
 # -------------------------
@@ -72,17 +95,58 @@ years = st.sidebar.number_input(
 st.sidebar.markdown("---")
 st.sidebar.write("Modellen antar at du består og fullfører på normert tid.")
 
-# Semesterverdier
 semester_basis_support = annual_basis_support / 2
-semester_income_threshold = annual_income_threshold / 2
-semester_full_loan_limit = annual_full_loan_limit / 2
+num_semesters = years * 2
+
+# Hvor mange inntektsår som trengs for å dekke alle semestre
+income_year_count = get_income_year_for_semester(num_semesters)
 
 # -------------------------
-# Input per år / semester
+# Input: årsinntekt
 # -------------------------
-st.markdown("## Legg inn data")
+st.markdown("## Årsinntekt")
+st.write(
+    "Legg inn årsinntekt per kalenderår. Hver årsinntekt brukes på de semestrene den faktisk påvirker."
+)
 
-rows = []
+annual_incomes = {}
+income_usage_rows = []
+
+income_cols = st.columns(min(income_year_count, 3))
+
+for i in range(1, income_year_count + 1):
+    col = income_cols[(i - 1) % len(income_cols)]
+    with col:
+        annual_incomes[i] = st.number_input(
+            f"Årsinntekt år {i}",
+            min_value=0,
+            value=120_000,
+            step=5_000,
+            key=f"annual_income_{i}",
+        )
+
+for semester_number in range(1, num_semesters + 1):
+    income_year = get_income_year_for_semester(semester_number)
+    income_usage_rows.append(
+        {
+            "Semester": get_term_label(semester_number),
+            "Bruker årsinntekt": f"År {income_year}",
+            "Årsinntekt": annual_incomes[income_year],
+        }
+    )
+
+usage_df = pd.DataFrame(income_usage_rows)
+st.dataframe(
+    usage_df.style.format({"Årsinntekt": lambda x: format_nok(x)}),
+    use_container_width=True,
+)
+
+# -------------------------
+# Input per studieår / semester
+# -------------------------
+st.markdown("## Data per studieår")
+
+semester_rows = []
 year_summary_rows = []
 
 total_loan = 0.0
@@ -91,76 +155,74 @@ total_support = 0.0
 total_school_fees = 0.0
 cumulative_debt = 0.0
 
+semester_number = 1
+
 for year in range(1, years + 1):
-    st.markdown(f"---")
+    st.markdown("---")
     st.markdown(f"## Studieår {year}")
 
     school_fees = st.number_input(
-        f"Skolepenger år {year}",
+        f"Skolepenger studieår {year}",
         min_value=0,
         value=0,
         step=5_000,
         key=f"school_fees_{year}",
-        help="Skolepenger legges inn som 100 % lån i denne modellen.",
+        help="Skolepenger behandles som 100 % lån i denne modellen.",
     )
 
     col1, col2 = st.columns(2)
 
-    # Semester 1
+    # Høstsemester
     with col1:
-        st.markdown(f"### År {year} – Semester 1")
+        current_semester = semester_number
+        current_label = get_term_label(current_semester)
+        income_year_current = get_income_year_for_semester(current_semester)
 
-        income_s1 = st.number_input(
-            f"Inntekt semester 1 (år {year})",
-            min_value=0,
-            value=60_000,
-            step=5_000,
-            key=f"income_s1_{year}",
-        )
+        st.markdown(f"### {current_label}")
+        st.caption(f"Bruker årsinntekt år {income_year_current}: {format_nok(annual_incomes[income_year_current])}")
 
-        lives_away_s1 = st.selectbox(
-            f"Bodd borte semester 1 (år {year})?",
+        lives_away_fall = st.selectbox(
+            f"Bodd borte i {current_label}?",
             options=["Ja", "Nei"],
             index=0,
-            key=f"away_s1_{year}",
+            key=f"away_sem_{current_semester}",
         )
 
-        support_share_s1 = st.slider(
-            f"Andel støtte mottatt semester 1 (år {year})",
+        support_share_fall = st.slider(
+            f"Andel støtte i {current_label}",
             min_value=0.0,
             max_value=1.0,
             value=1.0,
             step=0.05,
-            key=f"support_s1_{year}",
+            key=f"support_sem_{current_semester}",
             help="1.0 = full støtte, 0.5 = halv støtte, 0 = ingen støtte",
         )
 
-    # Semester 2
+    semester_number += 1
+
+    # Vårsemester
     with col2:
-        st.markdown(f"### År {year} – Semester 2")
+        current_semester = semester_number
+        current_label = get_term_label(current_semester)
+        income_year_current = get_income_year_for_semester(current_semester)
 
-        income_s2 = st.number_input(
-            f"Inntekt semester 2 (år {year})",
-            min_value=0,
-            value=60_000,
-            step=5_000,
-            key=f"income_s2_{year}",
-        )
+        st.markdown(f"### {current_label}")
+        st.caption(f"Bruker årsinntekt år {income_year_current}: {format_nok(annual_incomes[income_year_current])}")
 
-        lives_away_s2 = st.selectbox(
-            f"Bodd borte semester 2 (år {year})?",
+        lives_away_spring = st.selectbox(
+            f"Bodd borte i {current_label}?",
             options=["Ja", "Nei"],
             index=0,
-            key=f"away_s2_{year}",
+            key=f"away_sem_{current_semester}",
         )
 
-        support_share_s2 = st.slider(
-            f"Andel støtte mottatt semester 2 (år {year})",
+        support_share_spring = st.slider(
+            f"Andel støtte i {current_label}",
             min_value=0.0,
             max_value=1.0,
             value=1.0,
             step=0.05,
-            key=f"support_s2_{year}",
+            key=f"support_sem_{current_semester}",
             help="1.0 = full støtte, 0.5 = halv støtte, 0 = ingen støtte",
         )
 
@@ -168,19 +230,26 @@ for year in range(1, years + 1):
     year_stipend = 0.0
     year_loan = 0.0
 
+    fall_semester_number = (year * 2) - 1
+    spring_semester_number = year * 2
+
     semester_inputs = [
-        ("Semester 1", income_s1, lives_away_s1, support_share_s1),
-        ("Semester 2", income_s2, lives_away_s2, support_share_s2),
+        (fall_semester_number, lives_away_fall, support_share_fall),
+        (spring_semester_number, lives_away_spring, support_share_spring),
     ]
 
-    for semester_name, income, lives_away, support_share in semester_inputs:
+    for sem_num, lives_away, support_share in semester_inputs:
+        annual_income_year = get_income_year_for_semester(sem_num)
+        annual_income_used = annual_incomes[annual_income_year]
+        semester_label = get_term_label(sem_num)
+
         actual_support = semester_basis_support * support_share
 
         if lives_away == "Ja":
             stipend_ratio = calculate_stipend_ratio(
-                income=income,
-                threshold=semester_income_threshold,
-                full_loan_income_limit=semester_full_loan_limit,
+                annual_income=annual_income_used,
+                annual_threshold=annual_income_threshold,
+                annual_full_loan_limit=annual_full_loan_limit,
             )
         else:
             stipend_ratio = 0.0
@@ -196,24 +265,22 @@ for year in range(1, years + 1):
         total_stipend += stipend_amount
         total_loan += loan_amount
 
-        rows.append(
+        semester_rows.append(
             {
                 "Studieår": year,
-                "Semester": semester_name,
-                "Inntekt": income,
+                "Semester": semester_label,
+                "Bruker årsinntekt": f"År {annual_income_year}",
+                "Årsinntekt brukt": annual_income_used,
                 "Bodd borte": lives_away,
                 "Støttegrad": support_share,
                 "Mottatt støtte": actual_support,
                 "Stipend": stipend_amount,
                 "Lån fra basisstøtte": loan_amount,
-                "Skolepenger": 0.0,
             }
         )
 
-    # Legg til skolepenger som 100 % lån på årsnivå
     total_school_fees += school_fees
     total_loan += school_fees
-
     cumulative_debt = total_loan
 
     year_summary_rows.append(
@@ -228,10 +295,12 @@ for year in range(1, years + 1):
         }
     )
 
+    semester_number += 1
+
 # -------------------------
 # Resultater
 # -------------------------
-semester_df = pd.DataFrame(rows)
+semester_df = pd.DataFrame(semester_rows)
 year_df = pd.DataFrame(year_summary_rows)
 
 st.markdown("---")
@@ -262,12 +331,11 @@ st.markdown("## Semesteroversikt")
 st.dataframe(
     semester_df.style.format(
         {
-            "Inntekt": lambda x: format_nok(x),
+            "Årsinntekt brukt": lambda x: format_nok(x),
             "Støttegrad": "{:.0%}",
             "Mottatt støtte": lambda x: format_nok(x),
             "Stipend": lambda x: format_nok(x),
             "Lån fra basisstøtte": lambda x: format_nok(x),
-            "Skolepenger": lambda x: format_nok(x),
         }
     ),
     use_container_width=True,
@@ -287,17 +355,19 @@ ax.grid(True, alpha=0.3)
 st.pyplot(fig)
 
 # -------------------------
-# Forklaring
+# Forutsetninger
 # -------------------------
 st.markdown("## Forutsetninger")
 st.write(
     """
 - Modellen antar at du består og fullfører på normert tid.
-- Hvert studieår er delt inn i to semestre.
+- Hvert studieår har et høstsemester og et vårsemester.
+- Årsinntekt år 1 brukes kun på høstsemesteret i første studieår.
+- Deretter brukes hver årsinntekt på vårsemesteret og høstsemesteret rundt samme kalenderår.
 - Bor du hjemme i et semester, settes stipendandelen til 0 for det semesteret.
 - Bor du borte, kan opptil 40 % av støtten bli stipend.
 - Over inntektsgrensen trappes stipendandelen lineært ned til 0.
-- Skolepenger legges inn per år og behandles som 100 % lån i denne modellen.
+- Skolepenger legges inn per studieår og behandles som 100 % lån i denne modellen.
 - Dette er en planleggingsmodell og ikke en eksakt kopi av Lånekassens beregning.
 """
 )
