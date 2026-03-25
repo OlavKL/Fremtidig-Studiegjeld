@@ -99,8 +99,7 @@ semester_basis_support = annual_basis_support / 2
 num_semesters = years * 2
 
 # Hvor mange inntektsår som trengs for å dekke alle semestre
-income_year_count = get_income_year_for_semester(num_semesters)
-
+income_year_count = years + 1
 # -------------------------
 # Input: årsinntekt
 # -------------------------
@@ -199,6 +198,145 @@ for year in range(1, years + 1):
         )
 
     semester_number += 1
+
+    # Vårsemester
+    with col2:
+        current_semester = semester_number
+        current_label = get_term_label(current_semester)
+        income_year_current = get_income_year_for_semester(current_semester)
+
+        st.markdown(f"### {current_label}")
+        st.caption(f"Bruker årsinntekt år {income_year_current}: {format_nok(annual_incomes[income_year_current])}")
+
+        lives_away_spring = st.selectbox(
+            f"Bodd borte i {current_label}?",
+            options=["Ja", "Nei"],
+            index=0,
+            key=f"away_sem_{current_semester}",
+        )
+
+        support_share_spring = st.slider(
+            f"Andel støtte i {current_label}",
+            min_value=0.0,
+            max_value=1.0,
+            value=1.0,
+            step=0.05,
+            key=f"support_sem_{current_semester}",
+            help="1.0 = full støtte, 0.5 = halv støtte, 0 = ingen støtte",
+        )
+
+    year_support = 0.0
+    year_stipend = 0.0
+    year_loan = 0.0
+
+    fall_semester_number = (year * 2) - 1
+    spring_semester_number = year * 2
+
+    semester_inputs = [
+        (fall_semester_number, lives_away_fall, support_share_fall),
+        (spring_semester_number, lives_away_spring, support_share_spring),
+    ]
+
+    for sem_num, lives_away, support_share in semester_inputs:
+        annual_income_year = get_income_year_for_semester(sem_num)
+        annual_income_used = annual_incomes[annual_income_year]
+        semester_label = get_term_label(sem_num)
+
+        actual_support = semester_basis_support * support_share
+
+        if lives_away == "Ja":
+            stipend_ratio = calculate_stipend_ratio(
+                annual_income=annual_income_used,
+                annual_threshold=annual_income_threshold,
+                annual_full_loan_limit=annual_full_loan_limit,
+            )
+        else:
+            stipend_ratio = 0.0
+
+        stipend_amount = actual_support * stipend_ratio
+        loan_amount = actual_support - stipend_amount
+
+        year_support += actual_support
+        year_stipend += stipend_amount
+        year_loan += loan_amount
+
+        total_support += actual_support
+        total_stipend += stipend_amount
+        total_loan += loan_amount
+
+        semester_rows.append(
+            {
+                "Studieår": year,
+                "Semester": semester_label,
+                "Bruker årsinntekt": f"År {annual_income_year}",
+                "Årsinntekt brukt": annual_income_used,
+                "Bodd borte": lives_away,
+                "Støttegrad": support_share,
+                "Mottatt støtte": actual_support,
+                "Stipend": stipend_amount,
+                "Lån fra basisstøtte": loan_amount,
+            }
+        )
+
+    total_school_fees += school_fees
+    total_loan += school_fees
+    cumulative_debt = total_loan
+
+    year_summary_rows.append(
+        {
+            "Studieår": year,
+            "Støtte totalt": year_support,
+            "Stipend": year_stipend,
+            "Lån fra basisstøtte": year_loan,
+            "Skolepenger (100 % lån)": school_fees,
+            "Totalt lån dette året": year_loan + school_fees,
+            "Kumulativ gjeld": cumulative_debt,
+        }
+    )
+
+    semester_number += 1
+
+# -------------------------
+# Resultater
+# -------------------------
+semester_df = pd.DataFrame(semester_rows)
+year_df = pd.DataFrame(year_summary_rows)
+
+st.markdown("---")
+st.markdown("## Oppsummering")
+
+k1, k2, k3, k4 = st.columns(4)
+k1.metric("Total studiegjeld", format_nok(total_loan))
+k2.metric("Total stipend", format_nok(total_stipend))
+k3.metric("Total mottatt støtte", format_nok(total_support))
+k4.metric("Totale skolepenger", format_nok(total_school_fees))
+
+st.markdown("## Årsoversikt")
+st.dataframe(
+    year_df.style.format(
+        {
+            "Støtte totalt": lambda x: format_nok(x),
+            "Stipend": lambda x: format_nok(x),
+            "Lån fra basisstøtte": lambda x: format_nok(x),
+            "Skolepenger (100 % lån)": lambda x: format_nok(x),
+            "Totalt lån dette året": lambda x: format_nok(x),
+            "Kumulativ gjeld": lambda x: format_nok(x),
+        }
+    ),
+    use_container_width=True,
+)
+
+st.markdown("## Semesteroversikt")
+st.dataframe(
+    semester_df.style.format(
+        {
+            "Årsinntekt brukt": lambda x: format_nok(x),
+            "Støttegrad": "{:.0%}",
+            "Mottatt støtte": lambda x: format_nok(x),
+            "Stipend": lambda x: format_nok(x),
+            "Lån fra basisstøtte": lambda x: format_nok(x),
+        }
+    ),
 
     # Vårsemester
     with col2:
